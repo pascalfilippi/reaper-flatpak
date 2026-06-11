@@ -1,0 +1,53 @@
+name: build-and-publish
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # for `gh release` to its own repo
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-48
+      options: --privileged
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          manifest-path: fm.reaper.Reaper.yml
+          bundle: reaper.flatpak
+          cache-key: reaper-${{ hashFiles('fm.reaper.Reaper.yml', 'reaper-wrapper.sh') }}
+
+      - name: Publish bundle as rolling release
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
+          gh release create latest reaper.flatpak \
+            --title "Latest build" \
+            --notes "Built from ${{ github.sha }}" \
+            --prerelease
+
+      - name: Trigger central repo publish
+        if: github.event_name != 'pull_request'
+        uses: peter-evans/repository-dispatch@v4
+        with:
+          token: ${{ secrets.DISPATCH_PAT }}
+          repository: pascalfilippi/audio-flatpak-repo
+          event-type: bundle-published
+          client-payload: |
+            {
+              "source_repo": "${{ github.repository }}",
+              "source_sha":  "${{ github.sha }}",
+              "bundle_url":  "https://github.com/${{ github.repository }}/releases/download/latest/reaper.flatpak",
+              "is_runtime":  false
+            }

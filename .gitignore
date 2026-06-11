@@ -1,0 +1,24 @@
+# flatpak-builder artifacts
+.flatpak-builder/
+build/
+build-*/
+repo/
+*.flatpak
+
+# Python build artifacts (for Manager app)
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+dist/
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Local override files
+*.local.yaml
+*.local.yml

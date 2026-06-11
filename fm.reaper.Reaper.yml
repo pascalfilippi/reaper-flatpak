@@ -1,3 +1,7 @@
+# Vendored from https://github.com/flathub/fm.reaper.Reaper @ master
+# with the audio-flatpak project's patches applied (see PATCH-NOTES.md).
+#
+# Upstream sync procedure: see UPSTREAM-SYNC.md
 app-id: fm.reaper.Reaper
 runtime: org.freedesktop.Platform
 runtime-version: '25.08'
@@ -12,17 +16,44 @@ finish-args:
   - --socket=x11
   - --socket=pulseaudio
   - --filesystem=xdg-run/pipewire-0
+  # === audio-flatpak patch: RT scheduling via rtkit and Realtime portal ===
+  - --system-talk-name=org.freedesktop.RealtimeKit1
+  - --talk-name=org.freedesktop.portal.Desktop
   - --device=all
   - --filesystem=home
+  # === audio-flatpak patch: make optional yabridge extension discoverable
+  # via $PATH so chainloader stubs in ~/.vst3/yabridge/ resolve when the
+  # extension org.freedesktop.LinuxAudio.Plugins.yabridge is installed.
+  # Harmless if the extension is not installed. ===
+  - --env=PATH=/app/bin:/usr/bin:/app/extensions/Plugins/yabridge/bin
+  # === audio-flatpak patch: Wine syscalls for yabridge ===
+  # Required to spawn wineserver / yabridge-host.exe when the yabridge
+  # extension is installed. Without these, wine dies with SIGSYS the moment
+  # a host loads a chainloader. --allow=devel relaxes seccomp (ptrace,
+  # clone3); --allow=multiarch covers classic-WoW64 32-bit syscalls.
+  # Harmless if the yabridge extension is not installed.
+  - --allow=devel
+  - --allow=multiarch
 
 add-extensions:
   org.freedesktop.LinuxAudio.Plugins:
     directory: extensions/Plugins
-    version: '24.08'
+    version: '25.08'
     add-ld-path: lib
     merge-dirs: lv2;clap;vst;vst3
     subdirectories: true
     no-autodownload: true
+
+  # === audio-flatpak patch: 32-bit Platform compat for yabridge's Wine ===
+  # org.winehq.Wine//stable-25.08 (consumed via the yabridge extension's
+  # `base:`) is classic-WoW64. Its 32-bit children need /lib/ld-linux.so.2,
+  # which lives in Platform.Compat.i386. Without this, loading any
+  # yabridge'd plugin dies with "/lib/ld-linux.so.2: could not open".
+  # Harmless if the yabridge extension is not installed (the compat libs
+  # just sit unused).
+  org.freedesktop.Platform.Compat.i386:
+    directory: lib/i386-linux-gnu
+    version: '25.08'
 
 modules:
   - name: reaper
@@ -30,8 +61,9 @@ modules:
     build-commands:
       # Install script to extract tarball
       - install -D apply_extra /app/bin/apply_extra
-      # Install wrapper script to run application
-      - install -D reaper /app/bin/reaper
+      # === audio-flatpak patch: install reaper-wrapper.sh as /app/bin/reaper
+      # (replaces upstream's trivial 1-line exec-only script). ===
+      - install -Dm755 reaper-wrapper.sh /app/bin/reaper
       # Add icon
       - install -Dm644 main.png /app/share/icons/hicolor/256x256/apps/${FLATPAK_ID}.png
       # Add desktop integration
@@ -41,18 +73,24 @@ modules:
       # extensions
       - install -d /app/extensions/Plugins
       - install -d /app/lib/ffmpeg
+      # === audio-flatpak patch: pre-create mount point for the Compat.i386
+      # extension. /app is read-only at runtime, so bwrap can't mkdir the
+      # mount point itself — without this, `flatpak run` fails with
+      # "Can't mkdir parents for /app/lib/i386-linux-gnu: Read-only file
+      # system" and ldconfig exits 256. ===
+      - install -d /app/lib/i386-linux-gnu
     sources:
       - type: script
         dest-filename: apply_extra
         commands:
-          # Extract downnloaded tarball
+          # Extract downloaded tarball
           - mkdir -p export/share
           - tar xf reaper.tar.xz -C /app/extra/export/share
           - rm -f reaper.tar.xz
           # Run installer script
           - cd export/share/reaper_linux_*
           - ./install-reaper.sh --quiet --install /app/extra
-          # Clean up temp tiles
+          # Clean up temp files
           - cd ../../../
           - rm -rf /app/extra/export/share/reaper_linux_*
       - type: extra-data
@@ -82,10 +120,9 @@ modules:
           version-pattern: "<div class='hdrbottom'>Version ([\\d\\.-]*):"
           url-template: https://www.reaper.fm/files/7.x/reaper${major}${minor}_linux_aarch64.tar.xz
 
-      - type: script
-        dest-filename: reaper
-        commands:
-          - /app/extra/REAPER/reaper
+      # === audio-flatpak patch: ship reaper-wrapper.sh instead of inline `reaper` script ===
+      - type: file
+        path: reaper-wrapper.sh
       - type: file
         path: fm.reaper.Reaper.desktop
       - type: file
